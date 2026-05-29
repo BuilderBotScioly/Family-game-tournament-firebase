@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Tournament Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="role-selection" class="flex flex-col items-center justify-center min-h-screen p-4">
+        <h1 class="text-4xl font-bold mb-8 text-center text-blue-600">Family Game Tournament</h1>
+        <p class="mb-6 text-lg">Choose this device's role:</p>
+        <button onclick="selectRole('projector')" class="w-full max-w-sm mb-4 bg-blue-600 text-white py-4 rounded-xl text-xl font-bold shadow-lg hover:bg-blue-700">📺 Projector (Leaderboard)</button>
+        <button onclick="selectRole('controller')" class="w-full max-w-sm bg-green-600 text-white py-4 rounded-xl text-xl font-bold shadow-lg hover:bg-green-700">📱 iPhone Controller</button>
+    </div>
+
+    <div id="projector-view" class="hidden min-h-screen bg-gray-900 text-white p-8">
+        <h1 class="text-6xl font-extrabold text-center mb-12 text-yellow-400 drop-shadow-md">🏆 Live Leaderboard 🏆</h1>
+        <div class="max-w-4xl mx-auto bg-gray-800 rounded-2xl shadow-2xl overflow-hidden">
+            <table class="w-full text-left text-2xl">
+                <thead class="bg-gray-700 text-gray-300">
+                    <tr>
+                        <th class="py-4 px-6">Rank</th>
+                        <th class="py-4 px-6">Player</th>
+                        <th class="py-4 px-6 text-right">Total Score</th>
+                    </tr>
+                </thead>
+                <tbody id="leaderboard-body">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="controller-view" class="hidden min-h-screen p-4 pb-20">
+        <h2 class="text-3xl font-bold text-center mb-6 text-green-700">Tournament Remote</h2>
+        
+        <div class="bg-white p-5 rounded-xl shadow-md mb-6">
+            <h3 class="font-bold text-lg mb-2">Add New Player</h3>
+            <div class="flex gap-2">
+                <input type="text" id="new-player-name" placeholder="Player Name" class="flex-1 border p-3 rounded-lg bg-gray-50 text-lg">
+                <button onclick="addPlayer()" class="bg-blue-600 text-white px-5 rounded-lg font-bold">Add</button>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-md mb-6">
+            <h3 class="font-bold text-lg mb-2">Add New Game</h3>
+            <div class="flex gap-2">
+                <input type="text" id="new-game-name" placeholder="Game Name (e.g. Uno, Mario Kart)" class="flex-1 border p-3 rounded-lg bg-gray-50 text-lg">
+                <button onclick="addGame()" class="bg-purple-600 text-white px-5 rounded-lg font-bold">Add</button>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-md">
+            <h3 class="font-bold text-lg mb-4 border-b pb-2">Record Scores</h3>
+            <select id="game-select" class="w-full border p-3 rounded-lg bg-gray-50 text-lg mb-4">
+                <option value="">-- Select Game --</option>
+                </select>
+            
+            <div id="score-inputs" class="space-y-4 mb-4">
+                </div>
+            
+            <button onclick="submitScores()" class="w-full bg-green-600 text-white py-4 rounded-xl text-xl font-bold shadow-md hover:bg-green-700">Submit Scores</button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // YOUR FIREBASE CONFIG IS NOW INJECTED HERE
+        // ==========================================
+        const firebaseConfig = {
+          apiKey: "AIzaSyC2PeHNN0HfrmFT85OUHJwX2KOSn42I21o",
+          authDomain: "family-game-tournament.firebaseapp.com",
+          projectId: "family-game-tournament",
+          storageBucket: "family-game-tournament.firebasestorage.app",
+          messagingSenderId: "141628433094",
+          appId: "1:141628433094:web:34d03d80353ab454f6edc7",
+          measurementId: "G-H30BRLPZVD"
+        };
+        // ==========================================
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // State variables
+        let players = [];
+        let games = [];
+
+        // UI Routing
+        function selectRole(role) {
+            document.getElementById('role-selection').classList.add('hidden');
+            if (role === 'projector') {
+                document.getElementById('projector-view').classList.remove('hidden');
+            } else {
+                document.getElementById('controller-view').classList.remove('hidden');
+            }
+        }
+
+        // --- Firebase Listeners ---
+
+        // Listen for Players
+        db.ref('players').on('value', (snapshot) => {
+            players = [];
+            snapshot.forEach(child => {
+                players.push({ id: child.key, ...child.val() });
+            });
+            
+            // Sort by score descending
+            players.sort((a, b) => b.score - a.score);
+            
+            updateProjectorUI();
+            updateControllerPlayersUI();
+        });
+
+        // Listen for Games
+        db.ref('games').on('value', (snapshot) => {
+            games = [];
+            snapshot.forEach(child => {
+                games.push({ id: child.key, ...child.val() });
+            });
+            updateControllerGamesUI();
+        });
+
+
+        // --- UI Updaters ---
+
+        function updateProjectorUI() {
+            const tbody = document.getElementById('leaderboard-body');
+            tbody.innerHTML = '';
+            
+            players.forEach((player, index) => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-700";
+                
+                // Medals for top 3
+                let rankDisplay = `#${index + 1}`;
+                if (index === 0) rankDisplay = '🥇 1st';
+                if (index === 1) rankDisplay = '🥈 2nd';
+                if (index === 2) rankDisplay = '🥉 3rd';
+
+                tr.innerHTML = `
+                    <td class="py-4 px-6 font-bold text-yellow-400">${rankDisplay}</td>
+                    <td class="py-4 px-6 font-semibold">${player.name}</td>
+                    <td class="py-4 px-6 text-right font-bold text-green-400">${player.score} pts</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateControllerGamesUI() {
+            const select = document.getElementById('game-select');
+            select.innerHTML = '<option value="">-- Select Game --</option>';
+            games.forEach(game => {
+                const option = document.createElement('option');
+                option.value = game.id;
+                option.innerText = game.name;
+                select.appendChild(option);
+            });
+        }
+
+        function updateControllerPlayersUI() {
+            const container = document.getElementById('score-inputs');
+            container.innerHTML = '';
+            
+            players.forEach(player => {
+                const div = document.createElement('div');
+                div.className = "flex items-center justify-between bg-gray-100 p-3 rounded-lg";
+                div.innerHTML = `
+                    <span class="font-semibold text-lg w-1/2 overflow-hidden">${player.name}</span>
+                    <input type="number" id="score-input-${player.id}" placeholder="0" class="w-24 border p-2 rounded text-center text-lg font-bold" data-player-id="${player.id}">
+                `;
+                container.appendChild(div);
+            });
+        }
+
+
+        // --- Actions ---
+
+        function addPlayer() {
+            const nameInput = document.getElementById('new-player-name');
+            const name = nameInput.value.trim();
+            if (name === '') return alert('Enter a player name');
+            
+            db.ref('players').push({
+                name: name,
+                score: 0
+            });
+            nameInput.value = '';
+        }
+
+        function addGame() {
+            const gameInput = document.getElementById('new-game-name');
+            const name = gameInput.value.trim();
+            if (name === '') return alert('Enter a game name');
+            
+            db.ref('games').push({
+                name: name
+            });
+            gameInput.value = '';
+        }
+
+        function submitScores() {
+            const gameId = document.getElementById('game-select').value;
+            if (!gameId) return alert('Please select a game first!');
+
+            const inputs = document.querySelectorAll('#score-inputs input');
+            let updates = {};
+
+            inputs.forEach(input => {
+                const pointsToAdd = parseInt(input.value) || 0;
+                const playerId = input.getAttribute('data-player-id');
+                
+                if (pointsToAdd !== 0) {
+                    // Find current score and add to it
+                    const player = players.find(p => p.id === playerId);
+                    const newScore = (player.score || 0) + pointsToAdd;
+                    updates[`players/${playerId}/score`] = newScore;
+                }
+            });
+
+            if (Object.keys(updates).length > 0) {
+                db.ref().update(updates).then(() => {
+                    alert('Scores updated successfully!');
+                    // Clear inputs
+                    inputs.forEach(input => input.value = '');
+                    document.getElementById('game-select').value = '';
+                }).catch(err => {
+                    alert('Error updating scores: ' + err.message);
+                });
+            } else {
+                alert('No scores were entered.');
+            }
+        }
+    </script>
+</body>
+</html>
