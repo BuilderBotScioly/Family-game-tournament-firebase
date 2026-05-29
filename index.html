@@ -10,6 +10,8 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
         .hidden { display: none !important; }
+        /* Prevent double-tap zoom on iOS buttons */
+        button { touch-action: manipulation; }
     </style>
 </head>
 <body class="text-gray-800">
@@ -22,14 +24,14 @@
     </div>
 
     <div id="projector-view" class="hidden min-h-screen bg-gray-900 text-white p-8">
-        <h1 class="text-6xl font-extrabold text-center mb-12 text-yellow-400 drop-shadow-md">🏆 Live Leaderboard 🏆</h1>
+        <h1 id="projector-title" class="text-6xl font-extrabold text-center mb-12 text-yellow-400 drop-shadow-md">🏆 Grand Leaderboard 🏆</h1>
         <div class="max-w-4xl mx-auto bg-gray-800 rounded-2xl shadow-2xl overflow-hidden">
             <table class="w-full text-left text-2xl">
                 <thead class="bg-gray-700 text-gray-300">
                     <tr>
                         <th class="py-4 px-6">Rank</th>
                         <th class="py-4 px-6">Player</th>
-                        <th class="py-4 px-6 text-right">Total Score</th>
+                        <th class="py-4 px-6 text-right">Score</th>
                     </tr>
                 </thead>
                 <tbody id="leaderboard-body">
@@ -38,7 +40,7 @@
         </div>
     </div>
 
-    <div id="controller-view" class="hidden min-h-screen p-4 pb-20">
+    <div id="controller-home" class="hidden min-h-screen p-4 pb-20">
         <h2 class="text-3xl font-bold text-center mb-6 text-green-700">Tournament Remote</h2>
         
         <div class="bg-white p-5 rounded-xl shadow-md mb-6">
@@ -52,27 +54,44 @@
         <div class="bg-white p-5 rounded-xl shadow-md mb-6">
             <h3 class="font-bold text-lg mb-2">Add New Game</h3>
             <div class="flex gap-2">
-                <input type="text" id="new-game-name" placeholder="Game Name (e.g. Uno, Mario Kart)" class="flex-1 border p-3 rounded-lg bg-gray-50 text-lg">
+                <input type="text" id="new-game-name" placeholder="Game Name (e.g. Uno)" class="flex-1 border p-3 rounded-lg bg-gray-50 text-lg">
                 <button onclick="addGame()" class="bg-purple-600 text-white px-5 rounded-lg font-bold">Add</button>
             </div>
         </div>
 
         <div class="bg-white p-5 rounded-xl shadow-md">
-            <h3 class="font-bold text-lg mb-4 border-b pb-2">Record Scores</h3>
-            <select id="game-select" class="w-full border p-3 rounded-lg bg-gray-50 text-lg mb-4">
-                <option value="">-- Select Game --</option>
-                </select>
+            <h3 class="font-bold text-lg mb-4 border-b pb-2">Games & Scores</h3>
             
-            <div id="score-inputs" class="space-y-4 mb-4">
+            <div id="games-list" class="space-y-3">
+                <button onclick="setProjectorDisplay('all')" class="w-full text-left bg-yellow-100 hover:bg-yellow-200 border-2 border-yellow-400 p-4 rounded-xl font-bold text-lg flex justify-between items-center">
+                    <span>🏆 Grand Total (All Games)</span>
+                    <span class="text-sm bg-yellow-500 text-white px-2 py-1 rounded">Display</span>
+                </button>
                 </div>
-            
-            <button onclick="submitScores()" class="w-full bg-green-600 text-white py-4 rounded-xl text-xl font-bold shadow-md hover:bg-green-700">Submit Scores</button>
+        </div>
+    </div>
+
+    <div id="controller-game-view" class="hidden min-h-screen p-4 pb-20 bg-gray-100">
+        <button onclick="backToHome()" class="mb-4 text-blue-600 font-bold text-lg flex items-center">
+            ← Back to Home
+        </button>
+
+        <h2 id="editor-game-title" class="text-3xl font-bold text-center mb-4 text-purple-700">Game Name</h2>
+        
+        <button onclick="setProjectorDisplay('current')" class="w-full mb-6 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 flex justify-center items-center gap-2 text-lg">
+            📺 Show this game on Projector
+        </button>
+
+        <div class="bg-white p-4 rounded-xl shadow-md">
+            <h3 class="font-bold text-gray-500 mb-4 border-b pb-2">Adjust Scores</h3>
+            <div id="editor-players-list" class="space-y-4">
+                </div>
         </div>
     </div>
 
     <script>
         // ==========================================
-        // YOUR FIREBASE CONFIG IS NOW INJECTED HERE
+        // FIREBASE CONFIG
         // ==========================================
         const firebaseConfig = {
           apiKey: "AIzaSyC2PeHNN0HfrmFT85OUHJwX2KOSn42I21o",
@@ -85,13 +104,15 @@
         };
         // ==========================================
 
-        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
         // State variables
         let players = [];
         let games = [];
+        let scores = {}; // Structure: { gameId: { playerId: score } }
+        let activeDisplay = 'all'; // 'all' or a specific gameId
+        let editingGameId = null; // Tracks which game the controller is currently looking at
 
         // UI Routing
         function selectRole(role) {
@@ -99,51 +120,145 @@
             if (role === 'projector') {
                 document.getElementById('projector-view').classList.remove('hidden');
             } else {
-                document.getElementById('controller-view').classList.remove('hidden');
+                document.getElementById('controller-home').classList.remove('hidden');
             }
+        }
+
+        function backToHome() {
+            editingGameId = null;
+            document.getElementById('controller-game-view').classList.add('hidden');
+            document.getElementById('controller-home').classList.remove('hidden');
+        }
+
+        function openEditor(gameId, gameName) {
+            editingGameId = gameId;
+            document.getElementById('editor-game-title').innerText = gameName;
+            document.getElementById('controller-home').classList.add('hidden');
+            document.getElementById('controller-game-view').classList.remove('hidden');
+            renderEditorPlayers();
         }
 
         // --- Firebase Listeners ---
 
-        // Listen for Players
         db.ref('players').on('value', (snapshot) => {
             players = [];
-            snapshot.forEach(child => {
-                players.push({ id: child.key, ...child.val() });
-            });
-            
-            // Sort by score descending
-            players.sort((a, b) => b.score - a.score);
-            
+            snapshot.forEach(child => { players.push({ id: child.key, ...child.val() }); });
             updateProjectorUI();
-            updateControllerPlayersUI();
+            if(editingGameId) renderEditorPlayers();
         });
 
-        // Listen for Games
         db.ref('games').on('value', (snapshot) => {
             games = [];
-            snapshot.forEach(child => {
-                games.push({ id: child.key, ...child.val() });
-            });
-            updateControllerGamesUI();
+            snapshot.forEach(child => { games.push({ id: child.key, ...child.val() }); });
+            updateControllerGamesList();
         });
 
+        db.ref('scores').on('value', (snapshot) => {
+            scores = snapshot.val() || {};
+            updateProjectorUI();
+            if(editingGameId) renderEditorPlayers();
+        });
+
+        db.ref('activeDisplay').on('value', (snapshot) => {
+            activeDisplay = snapshot.val() || 'all';
+            updateProjectorUI();
+        });
 
         // --- UI Updaters ---
 
+        function updateControllerGamesList() {
+            const list = document.getElementById('games-list');
+            // Keep the Grand Total button, clear the rest
+            list.innerHTML = `
+                <button onclick="setProjectorDisplay('all')" class="w-full text-left bg-yellow-100 hover:bg-yellow-200 border-2 border-yellow-400 p-4 rounded-xl font-bold text-lg flex justify-between items-center">
+                    <span>🏆 Grand Total (All Games)</span>
+                    <span class="text-sm bg-yellow-600 text-white px-3 py-1 rounded-full shadow-sm">Display</span>
+                </button>
+            `;
+            
+            games.forEach(game => {
+                const btn = document.createElement('button');
+                btn.onclick = () => openEditor(game.id, game.name);
+                btn.className = "w-full text-left bg-gray-50 border p-4 rounded-xl font-bold text-lg flex justify-between items-center hover:bg-gray-100 shadow-sm";
+                btn.innerHTML = `
+                    <span class="text-purple-700">${game.name}</span>
+                    <span class="text-gray-400 text-sm">Edit ➔</span>
+                `;
+                list.appendChild(btn);
+            });
+        }
+
+        function renderEditorPlayers() {
+            const container = document.getElementById('editor-players-list');
+            container.innerHTML = '';
+            
+            players.forEach(player => {
+                // Get player score for this specific game
+                let pScore = 0;
+                if (scores[editingGameId] && scores[editingGameId][player.id]) {
+                    pScore = scores[editingGameId][player.id];
+                }
+
+                const div = document.createElement('div');
+                div.className = "flex items-center justify-between bg-gray-50 p-3 rounded-lg border";
+                div.innerHTML = `
+                    <span class="font-semibold text-lg w-1/3 truncate">${player.name}</span>
+                    <div class="flex items-center gap-3">
+                        <button onclick="adjustScore('${player.id}', -1)" class="w-10 h-10 bg-red-100 text-red-600 font-bold rounded-full text-xl flex items-center justify-center active:bg-red-200">-</button>
+                        <span class="w-12 text-center font-bold text-xl">${pScore}</span>
+                        <button onclick="adjustScore('${player.id}', 1)" class="w-10 h-10 bg-green-100 text-green-600 font-bold rounded-full text-xl flex items-center justify-center active:bg-green-200">+</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
         function updateProjectorUI() {
             const tbody = document.getElementById('leaderboard-body');
+            const title = document.getElementById('projector-title');
             tbody.innerHTML = '';
+
+            let leaderboardData = [];
+            let displayTitle = "🏆 Grand Leaderboard 🏆";
+
+            // Calculate scores based on what is being displayed
+            players.forEach(p => {
+                let totalScore = 0;
+                
+                if (activeDisplay === 'all') {
+                    // Sum all games
+                    Object.keys(scores).forEach(gameId => {
+                        if (scores[gameId][p.id]) {
+                            totalScore += scores[gameId][p.id];
+                        }
+                    });
+                } else {
+                    // Specific game
+                    const gameInfo = games.find(g => g.id === activeDisplay);
+                    if (gameInfo) displayTitle = `🎮 ${gameInfo.name} 🎮`;
+                    
+                    if (scores[activeDisplay] && scores[activeDisplay][p.id]) {
+                        totalScore = scores[activeDisplay][p.id];
+                    }
+                }
+                
+                leaderboardData.push({ name: p.name, score: totalScore });
+            });
+
+            // Update Title
+            title.innerText = displayTitle;
             
-            players.forEach((player, index) => {
+            // Sort by score descending
+            leaderboardData.sort((a, b) => b.score - a.score);
+            
+            leaderboardData.forEach((player, index) => {
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-gray-700";
                 
-                // Medals for top 3
                 let rankDisplay = `#${index + 1}`;
-                if (index === 0) rankDisplay = '🥇 1st';
-                if (index === 1) rankDisplay = '🥈 2nd';
-                if (index === 2) rankDisplay = '🥉 3rd';
+                if (index === 0 && player.score > 0) rankDisplay = '🥇 1st';
+                if (index === 1 && player.score > 0) rankDisplay = '🥈 2nd';
+                if (index === 2 && player.score > 0) rankDisplay = '🥉 3rd';
 
                 tr.innerHTML = `
                     <td class="py-4 px-6 font-bold text-yellow-400">${rankDisplay}</td>
@@ -154,89 +269,40 @@
             });
         }
 
-        function updateControllerGamesUI() {
-            const select = document.getElementById('game-select');
-            select.innerHTML = '<option value="">-- Select Game --</option>';
-            games.forEach(game => {
-                const option = document.createElement('option');
-                option.value = game.id;
-                option.innerText = game.name;
-                select.appendChild(option);
-            });
-        }
-
-        function updateControllerPlayersUI() {
-            const container = document.getElementById('score-inputs');
-            container.innerHTML = '';
-            
-            players.forEach(player => {
-                const div = document.createElement('div');
-                div.className = "flex items-center justify-between bg-gray-100 p-3 rounded-lg";
-                div.innerHTML = `
-                    <span class="font-semibold text-lg w-1/2 overflow-hidden">${player.name}</span>
-                    <input type="number" id="score-input-${player.id}" placeholder="0" class="w-24 border p-2 rounded text-center text-lg font-bold" data-player-id="${player.id}">
-                `;
-                container.appendChild(div);
-            });
-        }
-
-
         // --- Actions ---
 
         function addPlayer() {
-            const nameInput = document.getElementById('new-player-name');
-            const name = nameInput.value.trim();
+            const input = document.getElementById('new-player-name');
+            const name = input.value.trim();
             if (name === '') return alert('Enter a player name');
-            
-            db.ref('players').push({
-                name: name,
-                score: 0
-            });
-            nameInput.value = '';
+            db.ref('players').push({ name: name });
+            input.value = '';
         }
 
         function addGame() {
-            const gameInput = document.getElementById('new-game-name');
-            const name = gameInput.value.trim();
+            const input = document.getElementById('new-game-name');
+            const name = input.value.trim();
             if (name === '') return alert('Enter a game name');
-            
-            db.ref('games').push({
-                name: name
-            });
-            gameInput.value = '';
+            db.ref('games').push({ name: name });
+            input.value = '';
         }
 
-        function submitScores() {
-            const gameId = document.getElementById('game-select').value;
-            if (!gameId) return alert('Please select a game first!');
-
-            const inputs = document.querySelectorAll('#score-inputs input');
-            let updates = {};
-
-            inputs.forEach(input => {
-                const pointsToAdd = parseInt(input.value) || 0;
-                const playerId = input.getAttribute('data-player-id');
-                
-                if (pointsToAdd !== 0) {
-                    // Find current score and add to it
-                    const player = players.find(p => p.id === playerId);
-                    const newScore = (player.score || 0) + pointsToAdd;
-                    updates[`players/${playerId}/score`] = newScore;
-                }
+        function setProjectorDisplay(type) {
+            let targetDisplay = type === 'current' ? editingGameId : 'all';
+            db.ref('activeDisplay').set(targetDisplay).then(() => {
+                alert('Projector display updated!');
             });
+        }
 
-            if (Object.keys(updates).length > 0) {
-                db.ref().update(updates).then(() => {
-                    alert('Scores updated successfully!');
-                    // Clear inputs
-                    inputs.forEach(input => input.value = '');
-                    document.getElementById('game-select').value = '';
-                }).catch(err => {
-                    alert('Error updating scores: ' + err.message);
-                });
-            } else {
-                alert('No scores were entered.');
-            }
+        function adjustScore(playerId, amount) {
+            if (!editingGameId) return;
+            
+            const ref = db.ref(`scores/${editingGameId}/${playerId}`);
+            
+            // Transaction safely updates the score based on its current value
+            ref.transaction((currentScore) => {
+                return (currentScore || 0) + amount;
+            });
         }
     </script>
 </body>
